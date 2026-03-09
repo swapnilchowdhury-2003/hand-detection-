@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Camera</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --accent: #00ff88;
+    --accent2: #ff6b6b;
+    --accent3: #6b8aff;
+    --text: #e8e8f0;
+    --muted: #555570;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0,255,136,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 90% 80%, rgba(107,138,255,0.05) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 28px;
+    position: relative;
+    z-index: 1;
+  }
+
+  header h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(1.6rem, 4vw, 2.4rem);
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent3) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  header p {
+    color: var(--muted);
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  .main-layout {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    max-width: 960px;
+    align-items: flex-start;
+    position: relative;
+    z-index: 1;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .camera-wrap {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: #000;
+    box-shadow: 0 0 0 1px rgba(0,255,136,0.1), 0 24px 60px rgba(0,0,0,0.6);
+    flex-shrink: 0;
+  }
+
+  .camera-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(0,255,136,0.3), transparent 50%, rgba(107,138,255,0.2));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  video {
+    display: block;
+    width: 520px;
+    max-width: 100%;
+    aspect-ratio: 4/3;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+
+  canvas#overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    transform: scaleX(-1);
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .corner { position: absolute; width: 20px; height: 20px; z-index: 8; }
+  .corner.tl { top: 10px; left: 10px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+  .corner.tr { top: 10px; right: 10px; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+  .corner.bl { bottom: 10px; left: 10px; border-bottom: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+  .corner.br { bottom: 10px; right: 10px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.4;
+    z-index: 7;
+    animation: scan 3s linear infinite;
+  }
+  @keyframes scan { 0% { top: 0; opacity: 0.6; } 100% { top: 100%; opacity: 0; } }
+
+  .panels {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 200px;
+    flex: 1;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  }
+
+  .panel-label {
+    font-size: 0.6rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* Smile Panel */
+  .smile-display {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .smile-icon {
+    font-size: 3rem;
+    line-height: 1;
+    transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+    filter: grayscale(0.3);
+  }
+
+  .smile-icon.active {
+    transform: scale(1.2);
+    filter: grayscale(0);
+  }
+
+  .smile-info {
+    flex: 1;
+  }
+
+  .smile-status {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text);
+    transition: color 0.3s;
+  }
+
+  .smile-status.smiling { color: var(--accent); }
+  .smile-status.not-smiling { color: var(--muted); }
+
+  .smile-bar-wrap {
+    margin-top: 8px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .smile-bar {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent3), var(--accent));
+    transition: width 0.2s ease;
+    width: 0%;
+  }
+
+  /* Finger Panel */
+  .finger-big {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .finger-number {
+    font-family: 'Syne', sans-serif;
+    font-size: 4rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--accent3);
+    min-width: 60px;
+    transition: color 0.3s, transform 0.2s;
+  }
+
+  .finger-number.pop {
+    animation: pop 0.25s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  @keyframes pop { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+  .finger-dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 100px;
+  }
+
+  .fdot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background 0.2s, transform 0.2s;
+  }
+
+  .fdot.on {
+    background: var(--accent3);
+    box-shadow: 0 0 8px rgba(107,138,255,0.6);
+    transform: scale(1.1);
+  }
+
+  /* Stats panel */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .stat-item {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .stat-val {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .stat-lbl {
+    font-size: 0.58rem;
+    color: var(--muted);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* Status bar */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 14px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+    flex-shrink: 0;
+  }
+
+  .status-dot.live { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .start-btn {
+    display: block;
+    margin: 20px auto 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    color: #000;
+    font-family: 'Space Mono', monospace;
+    font-weight: 700;
+    font-size: 0.8rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 12px 32px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+
+  .start-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+  .start-btn:active { transform: translateY(0); }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10,10,15,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    border-radius: 16px;
+    gap: 12px;
+  }
+
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-overlay p {
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+
+  @media (max-width: 600px) {
+    video { width: 100%; }
+    .main-layout { flex-direction: column; }
+    .panels { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SMART CAMERA</h1>
+  <p>Smile Detection · Finger Counter · Live AI</p>
+</header>
+
+<div class="main-layout">
+  <div class="camera-wrap" id="cameraWrap">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div class="scan-line"></div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="spinner"></div>
+      <p>INITIALIZING...</p>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-label">😊 Smile Detection</div>
+      <div class="smile-display">
+        <div class="smile-icon" id="smileIcon">😐</div>
+        <div class="smile-info">
+          <div class="smile-status not-smiling" id="smileStatus">NOT SMILING</div>
+          <div class="smile-bar-wrap"><div class="smile-bar" id="smileBar"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">✋ Finger Count</div>
+      <div class="finger-big">
+        <div class="finger-number" id="fingerNum">—</div>
+        <div class="finger-dots" id="fingerDots"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">📊 Session Stats</div>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-val" id="smileCount">0</div>
+          <div class="stat-lbl">Smiles</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="fpsVal">—</div>
+          <div class="stat-lbl">FPS</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="maxFingers">—</div>
+          <div class="stat-lbl">Max Fingers</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-val" id="handsDetected">0</div>
+          <div class="stat-lbl">Hands</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="status-dot" id="statusDot"></div>
+  <span id="statusText">WAITING FOR CAMERA</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+<script>
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const loadingOverlay = document.getElementById('loadingOverlay');
+
+// UI refs
+const smileIcon = document.getElementById('smileIcon');
+const smileStatus = document.getElementById('smileStatus');
+const smileBar = document.getElementById('smileBar');
+const fingerNum = document.getElementById('fingerNum');
+const fingerDots = document.getElementById('fingerDots');
+const smileCountEl = document.getElementById('smileCount');
+const fpsValEl = document.getElementById('fpsVal');
+const maxFingersEl = document.getElementById('maxFingers');
+const handsDetectedEl = document.getElementById('handsDetected');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+
+// State
+let smileCount = 0;
+let maxFingers = 0;
+let wasSmiling = false;
+let lastFrameTime = performance.now();
+let fpsFilter = 0;
+let handsReady = false, faceReady = false;
+let lastFingerCount = -1;
+
+// Build finger dots (10 max)
+for (let i = 0; i < 10; i++) {
+  const d = document.createElement('div');
+  d.className = 'fdot';
+  d.id = `fd${i}`;
+  fingerDots.appendChild(d);
+}
+
+function setStatus(text, live = false) {
+  statusText.textContent = text;
+  statusDot.className = 'status-dot' + (live ? ' live' : '');
+}
+
+// ——— SMILE DETECTION via FaceMesh ———
+let smileScore = 0;
+
+function computeSmile(landmarks) {
+  // Lip corner distance (indices 61, 291) vs lip height (13, 14)
+  const lc = landmarks[61], rc = landmarks[291];
+  const lt = landmarks[13], lb = landmarks[14];
+  const mouthWidth = Math.sqrt((rc.x-lc.x)**2 + (rc.y-lc.y)**2);
+  const mouthHeight = Math.sqrt((lt.x-lb.x)**2 + (lt.y-lb.y)**2);
+  // Cheek raise: compare corners to eye corners (index 33 left outer, 263 right outer)
+  const le = landmarks[33], re = landmarks[263];
+  const faceWidth = Math.sqrt((re.x-le.x)**2 + (re.y-le.y)**2);
+  const ratio = mouthWidth / (faceWidth + 0.0001);
+  const openRatio = mouthHeight / (mouthWidth + 0.0001);
+  // Smile score: wide mouth + slight open
+  let score = (ratio - 0.38) * 8 + openRatio * 2;
+  score = Math.max(0, Math.min(1, score));
+  return score;
+}
+
+// ——— FINGER COUNTING via Hands ———
+const FINGER_TIPS = [4, 8, 12, 16, 20];
+const FINGER_MCP  = [3, 5, 9, 13, 17];
+const FINGER_PIP  = [3, 6, 10, 14, 18];
+
+function countFingers(landmarks) {
+  let count = 0;
+  // Thumb: compare x (mirrored)
+  const thumbTip = landmarks[4], thumbIp = landmarks[3];
+  // Finger 1-4: tip vs pip y
+  for (let i = 1; i < 5; i++) {
+    if (landmarks[FINGER_TIPS[i]].y < landmarks[FINGER_PIP[i]].y) count++;
+  }
+  // Thumb check using x distance from wrist
+  const wrist = landmarks[0];
+  const thumbDist = Math.abs(thumbTip.x - wrist.x);
+  const indexDist = Math.abs(landmarks[5].x - wrist.x);
+  if (thumbDist > indexDist * 0.5) count++;
+  return count;
+}
+
+// ——— MediaPipe Setup ———
+let handsInstance, faceMeshInstance;
+let currentHands = [], currentFaceScore = 0;
+
+async function setupMediaPipe() {
+  setStatus('LOADING MEDIAPIPE...');
+
+  // Hands
+  handsInstance = new Hands({
+    locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+  });
+  handsInstance.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+  handsInstance.onResults((results) => {
+    currentHands = results.multiHandLandmarks || [];
+    handsReady = true;
+  });
+
+  // FaceMesh
+  faceMeshInstance = new FaceMesh({
+    locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+  });
+  faceMeshInstance.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  faceMeshInstance.onResults((results) => {
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      currentFaceScore = computeSmile(results.multiFaceLandmarks[0]);
+    } else {
+      currentFaceScore = 0;
+    }
+    faceReady = true;
+  });
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      loadingOverlay.style.display = 'none';
+      setStatus('LIVE — AI RUNNING', true);
+      startLoop();
+    };
+  } catch(e) {
+    loadingOverlay.querySelector('p').textContent = 'CAMERA DENIED';
+    setStatus('CAMERA ACCESS DENIED');
+    console.error(e);
+  }
+}
+
+let frameCount = 0;
+async function startLoop() {
+  async function loop() {
+    const now = performance.now();
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+    fpsFilter = fpsFilter * 0.9 + (1000/dt) * 0.1;
+    if (frameCount % 5 === 0) fpsValEl.textContent = Math.round(fpsFilter);
+    frameCount++;
+
+    if (video.readyState >= 2) {
+      // Send to both pipelines (throttle face to every 3 frames)
+      await handsInstance.send({ image: video });
+      if (frameCount % 2 === 0) await faceMeshInstance.send({ image: video });
+    }
+
+    // Draw
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    // Draw hands
+    let totalFingers = 0;
+    for (const lm of currentHands) {
+      drawConnectors(ctx, lm, HAND_CONNECTIONS, { color: 'rgba(107,138,255,0.5)', lineWidth: 2 });
+      drawLandmarks(ctx, lm, { color: '#6b8aff', fillColor: 'rgba(107,138,255,0.3)', lineWidth: 1, radius: 4 });
+      totalFingers += countFingers(lm);
+    }
+
+    handsDetectedEl.textContent = currentHands.length;
+
+    // Finger UI
+    if (currentHands.length > 0) {
+      if (totalFingers !== lastFingerCount) {
+        fingerNum.textContent = totalFingers;
+        fingerNum.classList.remove('pop');
+        void fingerNum.offsetWidth;
+        fingerNum.classList.add('pop');
+        lastFingerCount = totalFingers;
+      }
+      for (let i = 0; i < 10; i++) {
+        document.getElementById(`fd${i}`).className = 'fdot' + (i < totalFingers ? ' on' : '');
+      }
+      if (totalFingers > maxFingers) {
+        maxFingers = totalFingers;
+        maxFingersEl.textContent = maxFingers;
+      }
+    } else {
+      fingerNum.textContent = '—';
+      lastFingerCount = -1;
+      for (let i = 0; i < 10; i++) document.getElementById(`fd${i}`).className = 'fdot';
+    }
+
+    // Smile UI
+    smileScore = smileScore * 0.7 + currentFaceScore * 0.3;
+    const isSmiling = smileScore > 0.42;
+    const pct = Math.min(100, smileScore * 140);
+    smileBar.style.width = pct + '%';
+
+    if (isSmiling) {
+      smileIcon.textContent = '😄';
+      smileIcon.classList.add('active');
+      smileStatus.textContent = 'SMILING! 😄';
+      smileStatus.className = 'smile-status smiling';
+      if (!wasSmiling) { smileCount++; smileCountEl.textContent = smileCount; }
+      wasSmiling = true;
+    } else {
+      smileIcon.textContent = '😐';
+      smileIcon.classList.remove('active');
+      smileStatus.textContent = 'NOT SMILING';
+      smileStatus.className = 'smile-status not-smiling';
+      wasSmiling = false;
+    }
+
+    requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+setupMediaPipe();
+</script>
+</body>
+</html>
